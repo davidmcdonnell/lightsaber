@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
+  <title>LED Controller</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px; }
+    button { background: #2563eb; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; margin: 5px; cursor: pointer; }
+    button:active { opacity: 0.8; }
+    .btn-seq { background: #374151; width: 80%; max-width: 300px; display: block; margin: 10px auto; }
+    canvas { border-radius: 50%; margin: 20px auto; display: block; touch-action: none; }
+    #status { font-size: 0.9em; color: #a1a1aa; margin-bottom: 15px; }
+  </style>
+</head>
+<body>
+
+  <h2>ESP32-C3 LED Control</h2>
+  <div id="status">Disconnected</div>
+  <button id="connectBtn" onclick="connectBLE()">Connect via Bluetooth</button>
+
+  <h3>Color Wheel</h3>
+  <canvas id="colorWheel" width="250" height="250"></canvas>
+
+  <h3>Quick Sequences</h3>
+  <button class="btn-seq" onclick="sendData('M:1')">🌈 Rainbow Cycle</button>
+  <button class="btn-seq" onclick="sendData('M:2')">🫁 Breathing Pulse</button>
+  <button class="btn-seq" onclick="sendData('M:3')">⚡ Strobe</button>
+  <button class="btn-seq" style="background:#dc2626;" onclick="sendData('C:0,0,0')">🛑 Turn Off</button>
+
+  <script>
+    const SERVICE_UUID = "4fa8691a-1360-4637-bfd3-0378d3548784";
+    const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+    let bleCharacteristic;
+
+    // Register Service Worker for Offline Capabilities
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+
+    // Bluetooth Connection Handler
+    async function connectBLE() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'ESP32-C3-LED-Controller' }],
+          optionalServices: [SERVICE_UUID]
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+        document.getElementById('status').innerText = "Connected to " + device.name;
+        document.getElementById('status').style.color = "#4ade80";
+      } catch (err) {
+        console.error(err);
+        alert("Bluetooth Connection Failed: " + err.message);
+      }
+    }
+
+    // Send Command via BLE
+    async function sendData(data) {
+      if (!bleCharacteristic) {
+        alert("Please connect to Bluetooth first!");
+        return;
+      }
+      const encoder = new TextEncoder();
+      await bleCharacteristic.writeValue(encoder.encode(data));
+    }
+
+    // Interactive HTML5 Canvas Color Wheel
+    const canvas = document.getElementById('colorWheel');
+    const ctx = canvas.getContext('2d');
+    const radius = canvas.width / 2;
+
+    function drawColorWheel() {
+      for (let angle = 0; angle < 360; angle += 1) {
+        let startAngle = (angle - 2) * Math.PI / 180;
+        let endAngle = (angle + 2) * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(radius, radius);
+        ctx.arc(radius, radius, radius, startAngle, endAngle);
+        ctx.closePath();
+        ctx.fillStyle = `hsl(${angle}, 100%, 50%)`;
+        ctx.fill();
+      }
+    }
+    drawColorWheel();
+
+    function handleColorPick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const x = clientX - rect.left - radius;
+      const y = clientY - rect.top - radius;
+      
+      const distance = Math.sqrt(x * x + y * y);
+      if (distance <= radius) {
+        let angle = Math.atan2(y, x) * (180 / Math.PI);
+        if (angle < 0) angle += 360;
+        
+        // Convert HSL to RGB
+        const rgb = hslToRgb(angle / 360, 1.0, 0.5);
+        sendData(`C:${rgb[0]},${rgb[1]},${rgb[2]}`);
+      }
+    }
+
+    canvas.addEventListener('pointerdown', handleColorPick);
+    canvas.addEventListener('pointermove', (e) => { if(e.buttons === 1) handleColorPick(e); });
+
+    function hslToRgb(h, s, l) {
+      let r, g, b;
+      if (s === 0) { r = g = b = l; } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hueToRgb(p, q, h + 1/3);
+        g = hueToRgb(p, q, h);
+        b = hueToRgb(p, q, h - 1/3);
+      }
+      return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+    }
+
+    function hueToRgb(p, q, t) {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    }
+  </script>
+</body>
+</html>
